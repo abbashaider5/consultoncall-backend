@@ -61,6 +61,19 @@ class CallStateManager {
         throw error;
       }
 
+      // Enforce expert availability at initiation time
+      if (!expert.isOnline) {
+        const error = new Error('Expert is currently offline. Please try again later.');
+        error.code = 'EXPERT_OFFLINE';
+        throw error;
+      }
+
+      if (expert.isBusy) {
+        const error = new Error('Expert is currently busy. Please try again later.');
+        error.code = 'EXPERT_BUSY';
+        throw error;
+      }
+
       // Check minimum balance (5 minutes worth)
       const minimumTokens = expert.tokensPerMinute * 5;
       if (user.tokens < minimumTokens) {

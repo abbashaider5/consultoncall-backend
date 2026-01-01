@@ -312,7 +312,10 @@ router.get('/status/:expertId', async (req, res) => {
       return res.status(404).json({ message: 'Expert not found' });
     }
 
-    res.json({ isOnline: expert.isOnline || false });
+    res.json({
+      isOnline: expert.isOnline || false,
+      isBusy: expert.isBusy || false
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
