@@ -541,5 +541,29 @@ router.get('/blocked', auth, async (req, res) => {
   }
 });
 
+// Get user by ID (public - for caller info in calls)
+router.get('/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('name avatar email role country');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json({
+      _id: user._id,
+      name: user.name,
+      avatar: user.avatar,
+      email: user.email,
+      role: user.role,
+      country: user.country
+    });
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;
 
