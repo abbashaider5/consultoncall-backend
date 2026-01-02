@@ -26,9 +26,10 @@ require('./models/Chat');
 const app = express();
 
 /* ===============================
-   CORS – PRODUCTION GRADE CONFIGURATION
-   ⚠️ CRITICAL: Never throw errors in CORS callback
-   ✅ Always return CORS headers, even on errors
+   CORS – PRODUCTION SAFE CONFIGURATION
+   ✅ Simple, clean, and production-ready
+   ✅ NEVER throws errors in callback
+   ✅ Only uses the `cors` npm package
    ================================ */
 
 const allowedOrigins = [
@@ -38,65 +39,30 @@ const allowedOrigins = [
   'https://api.abbaslogic.com'
 ];
 
-// Add custom origins from environment variable
-if (process.env.ALLOWED_ORIGINS) {
-  const customOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
-  allowedOrigins.push(...customOrigins);
-}
-
-// CORS Configuration - Production ready
+// CORS Configuration - Production safe
 const corsOptions = {
   origin: (origin, callback) => {
-    console.log(`🔍 CORS Check - Origin: ${origin}`);
-    
-    // In development, allow all origins for testing
-    if (process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    
-    // In production, validate origin
+    // Allow requests with no origin (Postman, server-to-server, curl)
     if (!origin) {
-      // Allow requests without origin (e.g., mobile apps, curl)
       return callback(null, true);
     }
     
+    // Allow only whitelisted origins
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`⚠️ CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
+      // ✅ CRITICAL: NEVER throw error, just deny the request
+      callback(null, false);
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-auth-token'],
-  exposedHeaders: ['Content-Length', 'X-JSON'],
-  maxAge: 86400, // 24 hours - cache preflight
-  optionsSuccessStatus: 200 // For legacy browsers
+  optionsSuccessStatus: 200
 };
 
-// Apply CORS middleware
+// Apply CORS middleware - ONLY using the cors package
 app.use(cors(corsOptions));
-
-// ✅ Explicit preflight handler - ensures OPTIONS always returns 200
-app.options('*', cors(corsOptions));
-
-// ✅ Fallback CORS headers middleware - ensures headers on ALL responses
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  // TEMP: Set CORS headers for ALL origins
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-auth-token');
-
-  next();
-});
 
 /* ===============================
    MIDDLEWARES
@@ -194,23 +160,12 @@ app.use('/api/chats', chatRoutes);
 
 /* ===============================
    GLOBAL ERROR HANDLER
-   ✅ ALWAYS returns CORS headers, even on errors
+   ✅ CORS headers are handled by cors middleware
 ================================ */
 
 app.use((err, req, res, next) => {
   console.error('🔥 API ERROR:', err.message);
   console.error('Stack:', err.stack);
-
-  // ✅ TEMP: Always set CORS headers on error responses for ALL origins
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-auth-token');
 
   // Return structured error
   res.status(err.statusCode || 500).json({
