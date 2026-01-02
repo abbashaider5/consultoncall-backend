@@ -7,6 +7,10 @@ const Call = require('../models/Call');
 const User = require('../models/User');
 const Expert = require('../models/Expert');
 const Transaction = require('../models/Transaction');
+const expertStatusManager = require('./expertStatusManager');
+const isExpertAvailable = expertStatusManager.isExpertAvailable;
+const setExpertBusy = expertStatusManager.setExpertBusy;
+const releaseExpertStatus = expertStatusManager.releaseExpert;
 
 // Call states - STRICT transitions only
 const CALL_STATES = {
@@ -61,16 +65,11 @@ class CallStateManager {
         throw error;
       }
 
-      // Enforce expert availability at initiation time
-      if (!expert.isOnline) {
-        const error = new Error('Expert is currently offline. Please try again later.');
-        error.code = 'EXPERT_OFFLINE';
-        throw error;
-      }
-
-      if (expert.isBusy) {
-        const error = new Error('Expert is currently busy. Please try again later.');
-        error.code = 'EXPERT_BUSY';
+      // Enforce expert availability at initiation time (using status manager)
+      const available = await isExpertAvailable(expertId);
+      if (!available) {
+        const error = new Error('Expert is currently offline or busy. Please try again later.');
+        error.code = 'EXPERT_UNAVAILABLE';
         throw error;
       }
 
@@ -113,12 +112,10 @@ class CallStateManager {
     try {
       const result = await this.transitionState(callId, CALL_STATES.RINGING);
       
-      // Set expert busy when call starts ringing
-      const call = await Call.findById(callId).populate('expert');
+      // Set expert busy when call starts ringing (using status manager)
+      const call = await Call.findById(callId);
       if (call && call.expert) {
-        call.expert.isBusy = true;
-        call.expert.currentCallId = callId;
-        await call.expert.save();
+        await setExpertBusy(call.expert, true, callId);
       }
       
       return result;
@@ -127,7 +124,7 @@ class CallStateManager {
       try {
         const call = await Call.findById(callId);
         if (call) {
-          await this.releaseExpert(call.expert);
+          await releaseExpertStatus(call.expert);
           call.status = CALL_STATES.FAILED;
           await call.save();
         }
@@ -218,7 +215,68 @@ class CallStateManager {
   }
 
   /**
-   * End call - calculate billing, update balances
+   * Check user balance during active call
+   * Returns warning if balance is low
+   */
+  static async checkBalance(callId) {
+    try {
+      const call = await Call.findById(callId)
+        .populate('caller')
+        .populate('expert');
+
+      if (!call || call.status !== CALL_STATES.CONNECTED) {
+        return {
+          shouldEnd: false,
+          warning: null,
+          balance: 0
+        };
+      }
+
+      const user = await User.findById(call.caller._id);
+      if (!user) {
+        return {
+          shouldEnd: true,
+          warning: 'User not found',
+          balance: 0
+        };
+      }
+
+      // Calculate current duration
+      const now = new Date();
+      const durationSeconds = Math.floor((now - call.startTime) / 1000);
+      const currentMinutes = Math.ceil(durationSeconds / 60);
+      const currentCost = currentMinutes * call.tokensPerMinute;
+
+      // Calculate remaining minutes
+      const remainingTokens = user.tokens;
+      const remainingMinutes = Math.floor(remainingTokens / call.tokensPerMinute);
+
+      // Determine warnings
+      let warning = null;
+      if (remainingTokens < call.tokensPerMinute) {
+        warning = 'LOW_BALANCE_CRITICAL'; // Less than 1 minute
+      } else if (remainingTokens < call.tokensPerMinute * 2) {
+        warning = 'LOW_BALANCE_1MIN'; // Less than 2 minutes
+      } else if (remainingTokens < call.tokensPerMinute * 3) {
+        warning = 'LOW_BALANCE_2MIN'; // Less than 3 minutes
+      }
+
+      return {
+        shouldEnd: remainingTokens < call.tokensPerMinute,
+        warning,
+        balance: user.tokens,
+        remainingMinutes,
+        currentMinutes,
+        costPerMinute: call.tokensPerMinute
+      };
+    } catch (error) {
+      console.error('CallStateManager.checkBalance error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * End call - calculate billing, update balances with concurrency control
    * This is the SINGLE SOURCE OF TRUTH for billing
    */
   static async endCall(callId, initiatedBy = 'user') {
@@ -256,15 +314,27 @@ class CallStateManager {
 
       await call.save();
 
-      // Deduct tokens from caller
+      // Deduct tokens from caller with atomic operation
       const caller = await User.findById(call.caller._id);
       const callerTokensBefore = caller.tokens;
 
-      // Deduct only what's available
+      // Deduct only what's available (never go negative)
       const actualDeduction = Math.min(tokensSpent, caller.tokens);
-      caller.tokens -= actualDeduction;
-      if (caller.tokens < 0) caller.tokens = 0;
-      await caller.save();
+      
+      // Atomic update to prevent race conditions
+      const updatedCaller = await User.findByIdAndUpdate(
+        caller._id,
+        {
+          $inc: { tokens: -actualDeduction }
+        },
+        { new: true, runValidators: true }
+      );
+
+      // Ensure balance doesn't go negative
+      if (updatedCaller.tokens < 0) {
+        await User.findByIdAndUpdate(caller._id, { $set: { tokens: 0 } });
+        updatedCaller.tokens = 0;
+      }
 
       // Create caller transaction
       const callerTransaction = new Transaction({
@@ -274,21 +344,29 @@ class CallStateManager {
         description: `Call with ${call.expert.user.name} (${minutes} min)`,
         call: call._id,
         tokensBefore: callerTokensBefore,
-        tokensAfter: caller.tokens
+        tokensAfter: updatedCaller.tokens
       });
       await callerTransaction.save();
 
-      // Credit expert (90% of tokens)
+      // Credit expert (90% of tokens) with atomic operation
       const expertTokens = Math.floor(actualDeduction * 0.9);
-      const expert = await Expert.findById(call.expert._id);
       
-      expert.totalCalls += 1;
-      expert.totalMinutes += minutes;
-      expert.tokensEarned += expertTokens;
-      expert.unclaimedTokens += expertTokens;
-      expert.isBusy = false;
-      expert.currentCallId = null;
-      await expert.save();
+      const updatedExpert = await Expert.findByIdAndUpdate(
+        call.expert._id,
+        {
+          $inc: {
+            totalCalls: 1,
+            totalMinutes: minutes,
+            tokensEarned: expertTokens,
+            unclaimedTokens: expertTokens
+          },
+          $set: {
+            isBusy: false,
+            currentCallId: null
+          }
+        },
+        { new: true, runValidators: true }
+      );
 
       return {
         success: true,
@@ -297,7 +375,8 @@ class CallStateManager {
         minutes,
         tokensSpent: actualDeduction,
         expertTokens,
-        callerBalance: caller.tokens
+        callerBalance: updatedCaller.tokens,
+        initiatedBy
       };
     } catch (error) {
       console.error('CallStateManager.endCall error:', error);
@@ -390,16 +469,11 @@ class CallStateManager {
   }
 
   /**
-   * Release expert from call
+   * Release expert from call (using status manager)
    */
   static async releaseExpert(expertId) {
     try {
-      const expert = await Expert.findById(expertId);
-      if (expert) {
-        expert.isBusy = false;
-        expert.currentCallId = null;
-        await expert.save();
-      }
+      await releaseExpertStatus(expertId);
     } catch (error) {
       console.error('CallStateManager.releaseExpert error:', error);
     }

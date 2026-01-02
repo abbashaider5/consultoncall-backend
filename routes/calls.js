@@ -4,12 +4,13 @@ const Expert = require('../models/Expert');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const { auth } = require('../middleware/auth');
+const { callInitiationLimiter } = require('../middleware/rateLimiter');
 const { CallStateManager, CALL_STATES } = require('../services/callStateManager');
 
 const router = express.Router();
 
-// Initiate a call - BACKEND IS SOURCE OF TRUTH
-router.post('/initiate', auth, async (req, res) => {
+// Initiate a call - BACKEND IS SOURCE OF TRUTH (with rate limiting)
+router.post('/initiate', auth, callInitiationLimiter, async (req, res) => {
   try {
     const { expertId } = req.body;
 
@@ -240,131 +241,20 @@ router.get('/state/:callId', auth, async (req, res) => {
   }
 });
 
-// End call and calculate billing
-router.put('/end/:callId', auth, async (req, res) => {
-  try {
-    const call = await Call.findById(req.params.callId)
-      .populate('caller')
-      .populate({
-        path: 'expert',
-        populate: { path: 'user' }
-      });
 
-    if (!call) {
-      return res.status(404).json({ message: 'Call not found' });
-    }
-
-    if (call.status !== 'ongoing') {
-      return res.status(400).json({ message: 'Call is not ongoing' });
-    }
-
-    // Mark expert as not busy
-    const expert = await Expert.findById(call.expert._id);
-    expert.isBusy = false;
-    expert.currentCallId = null;
-
-    // Calculate duration and tokens spent
-    call.endTime = new Date();
-    call.duration = Math.floor((call.endTime - call.startTime) / 1000); // Duration in seconds
-    call.status = 'completed';
-
-    // Calculate tokens spent (minimum 1 minute, round up)
-    const minutes = Math.max(1, Math.ceil(call.duration / 60));
-    call.tokensSpent = minutes * call.tokensPerMinute;
-
-    await call.save();
-
-    // Deduct tokens from caller
-    const caller = await User.findById(call.caller._id);
-    const callerTokensBefore = caller.tokens;
-
-    // Check if caller has enough tokens
-    if (caller.tokens < call.tokensSpent) {
-      call.tokensSpent = caller.tokens; // Deduct only what's available
-    }
-
-    caller.tokens -= call.tokensSpent;
-    if (caller.tokens < 0) caller.tokens = 0;
-    await caller.save();
-
-    // Create transaction for caller (debit)
-    const callerTransaction = new Transaction({
-      user: caller._id,
-      type: 'debit',
-      tokens: call.tokensSpent,
-      description: `Call with ${call.expert.user.name} (${minutes} min)`,
-      call: call._id,
-      tokensBefore: callerTokensBefore,
-      tokensAfter: caller.tokens
-    });
-    await callerTransaction.save();
-
-    // Add tokens to expert's unclaimed tokens (expert gets 90%)
-    const expertTokens = Math.floor(call.tokensSpent * 0.9);
-
-    // Update expert stats
-    expert.totalCalls += 1;
-    expert.totalMinutes += minutes;
-    expert.tokensEarned += expertTokens;
-    expert.unclaimedTokens += expertTokens;
-    await expert.save();
-
-    res.json({
-      success: true,
-      message: 'Call ended',
-      call: {
-        id: call._id,
-        duration: call.duration,
-        minutes: minutes,
-        tokensSpent: call.tokensSpent,
-        expertTokens
-      },
-      newBalance: caller.tokens
-    });
-  } catch (error) {
-    console.error('End call error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Check wallet balance during call (for real-time monitoring)
+// Check wallet balance during call (for real-time monitoring with warnings)
 router.get('/check-balance/:callId', auth, async (req, res) => {
   try {
-    const call = await Call.findById(req.params.callId);
-    if (!call) {
-      return res.status(404).json({ success: false, message: 'Call not found' });
-    }
-
-    const user = await User.findById(req.user._id);
-
-    if (call.status === CALL_STATES.CONNECTED && call.startTime) {
-      const elapsedSeconds = Math.floor((new Date() - call.startTime) / 1000);
-      const elapsedMinutes = Math.ceil(elapsedSeconds / 60);
-      const estimatedCost = elapsedMinutes * call.tokensPerMinute;
-
-      res.json({
-        success: true,
-        currentBalance: user.tokens,
-        elapsedMinutes,
-        elapsedSeconds,
-        estimatedCost,
-        tokensPerMinute: call.tokensPerMinute,
-        shouldEndCall: user.tokens < call.tokensPerMinute
-      });
-    } else {
-      res.json({
-        success: true,
-        currentBalance: user.tokens,
-        elapsedMinutes: 0,
-        elapsedSeconds: 0,
-        estimatedCost: 0,
-        tokensPerMinute: call.tokensPerMinute,
-        shouldEndCall: false
-      });
-    }
+    // Use CallStateManager's checkBalance function
+    const result = await CallStateManager.checkBalance(req.params.callId);
+    
+    res.json({
+      success: true,
+      ...result
+    });
   } catch (error) {
     console.error('Check balance error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

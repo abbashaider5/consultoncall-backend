@@ -4,11 +4,12 @@ const passport = require('../config/passport');
 const User = require('../models/User');
 const Expert = require('../models/Expert');
 const { auth } = require('../middleware/auth');
+const { authLimiter, registrationLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
-// Register user
-router.post('/register', async (req, res) => {
+// Register user (with rate limiting)
+router.post('/register', registrationLimiter, async (req, res) => {
   try {
     const { name, email, password, phone, role } = req.body;
 
@@ -118,8 +119,8 @@ router.post('/register-expert', async (req, res) => {
   }
 });
 
-// Login
-router.post('/login', async (req, res) => {
+// Login (with rate limiting)
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 

@@ -38,12 +38,34 @@ const allowedOrigins = [
   'https://api.abbaslogic.com'
 ];
 
-// CORS Configuration - TEMPORARILY PERMISSIVE
+// Add custom origins from environment variable
+if (process.env.ALLOWED_ORIGINS) {
+  const customOrigins = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
+  allowedOrigins.push(...customOrigins);
+}
+
+// CORS Configuration - Production ready
 const corsOptions = {
   origin: (origin, callback) => {
     console.log(`🔍 CORS Check - Origin: ${origin}`);
-    // TEMP: Allow ALL origins
-    return callback(null, true);
+    
+    // In development, allow all origins for testing
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    // In production, validate origin
+    if (!origin) {
+      // Allow requests without origin (e.g., mobile apps, curl)
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️ CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
