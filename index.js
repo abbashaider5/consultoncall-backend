@@ -125,6 +125,17 @@ mongoose.connection.on('disconnected', () => {
 });
 
 /* ===============================
+   ROOT ROUTE (for Render health check)
+================================ */
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'ConsultOnCall API is running 🚀'
+  });
+});
+
+/* ===============================
    HEALTH & TEST ROUTES
 ================================ */
 
@@ -159,7 +170,20 @@ app.use('/api/chats', chatRoutes);
 // app.use('/api/admin', adminRoutes);
 
 /* ===============================
-   GLOBAL ERROR HANDLER
+   404 HANDLER (with CORS)
+================================ */
+
+app.use((req, res) => {
+  // CORS headers are automatically set by cors middleware
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+    path: req.path
+  });
+});
+
+/* ===============================
+   GLOBAL ERROR HANDLER (with CORS)
    ✅ CORS headers are handled by cors middleware
 ================================ */
 
@@ -167,6 +191,7 @@ app.use((err, req, res, next) => {
   console.error('🔥 API ERROR:', err.message);
   console.error('Stack:', err.stack);
 
+  // CORS headers are automatically set by cors middleware
   // Return structured error
   res.status(err.statusCode || 500).json({
     success: false,
