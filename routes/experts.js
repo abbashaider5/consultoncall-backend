@@ -49,19 +49,26 @@ router.get('/', async (req, res) => {
     // Filter out experts where user populate failed
     const validExperts = Array.isArray(experts) ? experts.filter(expert => expert && expert.user !== null) : [];
 
-    // Auto-clear stuck busy statuses
+    // Auto-clear stuck busy statuses (only if more than 5 minutes ago, limit to 5 at a time to avoid slowing down the API)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const clearPromises = validExperts
+    const stuckExperts = validExperts
       .filter(expert => expert.isBusy && expert.updatedAt < fiveMinutesAgo)
-      .map(async (expert) => {
-        console.log(`Auto-clearing stuck busy status for expert ${expert._id} in list`);
-        expert.isBusy = false;
-        expert.currentCallId = null;
-        await expert.save();
+      .slice(0, 5); // Limit to 5 at a time
+    
+    if (stuckExperts.length > 0) {
+      // Clear status in background without blocking the response
+      setImmediate(async () => {
+        for (const expert of stuckExperts) {
+          try {
+            console.log(`Auto-clearing stuck busy status for expert ${expert._id} in list`);
+            expert.isBusy = false;
+            expert.currentCallId = null;
+            await expert.save();
+          } catch (err) {
+            console.error(`Failed to clear busy status for expert ${expert._id}:`, err);
+          }
+        }
       });
-
-    if (clearPromises.length > 0) {
-      await Promise.all(clearPromises);
     }
 
     const total = await Expert.countDocuments(query);

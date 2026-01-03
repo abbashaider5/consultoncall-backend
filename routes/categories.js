@@ -15,33 +15,42 @@ router.get('/', async (req, res) => {
     const categories = await Category.find({ isActive: true }).sort({ order: 1, name: 1 }).lean();
     console.log('Found categories:', categories.length);
     
-    // Add expert counts efficiently
-    const categoriesWithCounts = await Promise.all(
-      (categories || []).map(async (category) => {
-        try {
-          const expertCount = await Expert.countDocuments({ 
-            categories: category._id,
-            isApproved: true 
-          });
-          const onlineCount = await Expert.countDocuments({ 
-            categories: category._id, 
-            isOnline: true,
-            isApproved: true 
-          });
-          return {
-            ...category,
-            expertCount: expertCount || 0,
-            onlineCount: onlineCount || 0
-          };
-        } catch (err) {
-          return {
-            ...category,
-            expertCount: 0,
-            onlineCount: 0
-          };
+    // Get category IDs
+    const categoryIds = categories.map(cat => cat._id);
+    
+    // Get expert counts in a single aggregation query (much faster than N+1 queries)
+    const expertCounts = await Expert.aggregate([
+      { $match: { categories: { $in: categoryIds }, isApproved: true } },
+      { $unwind: '$categories' },
+      { $match: { categories: { $in: categoryIds } } },
+      { 
+        $group: {
+          _id: '$categories',
+          count: { $sum: 1 },
+          onlineCount: {
+            $sum: {
+              $cond: ['$isOnline', 1, 0]
+            }
+          }
         }
-      })
-    );
+      }
+    ]);
+    
+    // Create lookup map for O(1) access
+    const countMap = {};
+    expertCounts.forEach(item => {
+      countMap[item._id.toString()] = {
+        expertCount: item.count,
+        onlineCount: item.onlineCount
+      };
+    });
+    
+    // Add counts to categories
+    const categoriesWithCounts = categories.map(category => ({
+      ...category,
+      expertCount: countMap[category._id.toString()]?.expertCount || 0,
+      onlineCount: countMap[category._id.toString()]?.onlineCount || 0
+    }));
     
     res.status(200).json({ 
       success: true, 
