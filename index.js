@@ -14,6 +14,7 @@ const expertRoutes = require('./routes/experts');
 const callRoutes = require('./routes/calls');
 const chatRoutes = require('./routes/chats'); // Switching to chats.js (has get-or-create)
 const categoryRoutes = require('./routes/categories');
+const agoraRoutes = require('./routes/agora');
 
 // Ensure models are registered
 require('./models/User');
@@ -169,6 +170,7 @@ app.use('/api/experts', expertRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/chats', chatRoutes);
+app.use('/api/agora', agoraRoutes);
 // app.use('/api/admin', adminRoutes);
 
 /* ===============================
