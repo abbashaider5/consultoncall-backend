@@ -34,6 +34,8 @@ const app = express();
 
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
   'https://abbaslogic.com',
   'https://www.abbaslogic.com',
   'https://api.abbaslogic.com'
