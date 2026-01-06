@@ -1,5 +1,3 @@
-const crypto = require('crypto');
-
 // Get Agora credentials from environment variables
 const AGORA_APP_ID = process.env.AGORA_APP_ID;
 const AGORA_APP_CERTIFICATE = process.env.AGORA_APP_CERTIFICATE;
@@ -7,24 +5,28 @@ const AGORA_CHAT_APP_KEY = process.env.AGORA_CHAT_APP_KEY;
 const AGORA_CHAT_CLIENT_ID = process.env.AGORA_CHAT_CLIENT_ID;
 const AGORA_CHAT_CLIENT_SECRET = process.env.AGORA_CHAT_CLIENT_SECRET;
 
+const getChatRtmUserId = (userId) => {
+  if (!userId) return null;
+  return `chat_${String(userId)}`;
+};
+
 /**
- * Generate Agora Chat user token
- * Uses agora-access-token package for proper Agora Chat token generation
- * CRITICAL: Uses ONLY user._id as string - no prefixes, no modifications
- * @param {string} userId - User ID from database (must be plain string)
+ * Generate Agora Chat (RTM-style) user token
+ * Uses ONLY AGORA_APP_ID + AGORA_APP_CERTIFICATE.
+ * CRITICAL: Uses one stable RTM userId: chat_<user._id>
+ * @param {string} userId - User ID from database
  * @param {number} expiration - Token expiration time in seconds (default: 86400 = 24 hours)
- * @returns {object} { token, userId } - Agora Chat token and userId used
+ * @returns {object} { token, rtmUserId, expiresAt } - Token and RTM userId used
  */
 const generateChatToken = (userId, expiration = 86400) => {
-  if (!AGORA_CHAT_APP_KEY) {
-    throw new Error('Agora Chat credentials not configured');
+  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE) {
+    throw new Error('Agora credentials not configured');
   }
 
-  // CRITICAL: Use EXACT userId as provided - no modifications
-  // This userId MUST match what frontend uses in client.open()
-  const chatUserId = String(userId);
-  
-  console.log('🔑 Generating Agora Chat token for userId:', chatUserId);
+  const rtmUserId = getChatRtmUserId(userId);
+  if (!rtmUserId) {
+    throw new Error('Invalid userId for chat token generation');
+  }
   
   // Use agora-access-token package for proper Agora Chat token generation
   try {
@@ -33,34 +35,21 @@ const generateChatToken = (userId, expiration = 86400) => {
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const privilegeExpiredTs = currentTimestamp + expiration;
 
-    // Build Agora Chat token using RtmTokenBuilder
-    // Agora Chat SDK uses the same token format as RTM
+    // Build token using Agora App ID + Primary Certificate
     const token = RtmTokenBuilder.buildToken(
-      AGORA_CHAT_APP_KEY,  // appId for RTM/Chat
-      AGORA_CHAT_APP_KEY,   // appCert for RTM/Chat
-      chatUserId,            // userId - EXACT string, no modifications
+      AGORA_APP_ID,
+      AGORA_APP_CERTIFICATE,
+      rtmUserId,
       RtmTokenBuilder.Role.RtmUser,
       privilegeExpiredTs
     );
 
-    console.log('✅ Agora Chat token generated successfully for userId:', chatUserId);
-    
     return {
       token: token,
-      userId: chatUserId // Return userId used for generation
+      rtmUserId,
+      expiresAt: privilegeExpiredTs
     };
   } catch (error) {
-    console.error('❌ Agora Chat token generation error:', error);
-    
-    // Fallback: Try using appKey directly without token (for development only)
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('⚠️ Using appKey directly (development mode only)');
-      return {
-        token: null, // No token, will use appKey
-        userId: chatUserId
-      };
-    }
-    
     throw new Error('Failed to generate chat token: ' + error.message);
   }
 };
@@ -138,6 +127,7 @@ const parseUid = (agoraUid) => {
 module.exports = {
   generateRtcToken,
   generateChatToken,
+  getChatRtmUserId,
   generateChannelName,
   generateUid,
   parseUid,
