@@ -61,15 +61,21 @@ router.post('/rtc-token', auth, async (req, res) => {
 
 /**
  * Generate Agora Chat token
- * POST /api/agora/chat-token
- * Body: { username }
+ * GET /api/agora/chat-token
  */
-router.post('/chat-token', auth, async (req, res) => {
+router.get('/chat-token', auth, async (req, res) => {
   try {
-    const { username } = req.body;
+    // Use authenticated user ID as username
+    const chatUsername = req.user._id.toString();
 
-    // Use user ID as username if not provided
-    const chatUsername = username || req.user._id.toString();
+    // Check if Agora Chat credentials are configured
+    if (!AGORA_CHAT_APP_KEY) {
+      console.error('Agora Chat credentials not configured in environment');
+      return res.status(500).json({
+        success: false,
+        message: 'Agora Chat service not configured'
+      });
+    }
 
     // Generate chat token (valid for 24 hours)
     const token = generateChatToken(chatUsername, 86400);
