@@ -165,7 +165,7 @@ app.get('/api/test', (req, res) => {
 ================================ */
 
 app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
+app.use('/api/agora/test', userRoutes);
 app.use('/api/experts', expertRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/calls', callRoutes);

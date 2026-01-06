@@ -11,8 +11,25 @@ const {
 
 const router = express.Router();
 
+// Root route to verify agora router is loaded
+router.get('/', (req, res) => {
+  console.log('📋 /api/agora endpoint hit');
+  res.json({
+    success: true,
+    message: 'Agora API is running',
+    endpoints: [
+      'GET /api/agora/test',
+      'GET /api/agora/chat-token',
+      'POST /api/agora/rtc-token',
+      'GET /api/agora/config'
+    ],
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Test route to verify agora routes are loaded
 router.get('/test', (req, res) => {
+  console.log('📋 /api/agora/test endpoint hit');
   res.json({
     success: true,
     message: 'Agora routes are working',
