@@ -173,6 +173,15 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/agora', agoraRoutes);
 // app.use('/api/admin', adminRoutes);
 
+// Log routes for debugging
+if (process.env.NODE_ENV === 'development') {
+  console.log('📋 Available Agora routes:');
+  console.log('  GET /api/agora/test');
+  console.log('  GET /api/agora/chat-token');
+  console.log('  POST /api/agora/rtc-token');
+  console.log('  GET /api/agora/config');
+}
+
 /* ===============================
    404 HANDLER (with CORS)
 ================================ */

@@ -11,6 +11,15 @@ const {
 
 const router = express.Router();
 
+// Test route to verify agora routes are loaded
+router.get('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Agora routes are working',
+    timestamp: new Date().toISOString()
+  });
+});
+
 /**
  * Generate Agora RTC token for audio call
  * POST /api/agora/rtc-token

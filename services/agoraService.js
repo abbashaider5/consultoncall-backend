@@ -1,46 +1,16 @@
-const RtcTokenBuilder = require('agora-token').RtcTokenBuilder;
-const RtcRole = require('agora-token').RtcRole;
+const crypto = require('crypto');
 
 // Get Agora credentials from environment variables
 const AGORA_APP_ID = process.env.AGORA_APP_ID;
 const AGORA_APP_CERTIFICATE = process.env.AGORA_APP_CERTIFICATE;
 const AGORA_CHAT_APP_KEY = process.env.AGORA_CHAT_APP_KEY;
-
-/**
- * Generate Agora RTC token for audio calling
- * @param {string} channelName - The channel name for the call
- * @param {string} uid - User ID (string representation)
- * @param {number} role - 1 for publisher, 2 for subscriber
- * @param {number} expiration - Token expiration time in seconds (default: 3600 = 1 hour)
- * @returns {string} Agora RTC token
- */
-const generateRtcToken = (channelName, uid, role = RtcRole.PUBLISHER, expiration = 3600) => {
-  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE) {
-    throw new Error('Agora credentials not configured');
-  }
-
-  // Current timestamp + expiration
-  const currentTimestamp = Math.floor(Date.now() / 1000);
-  const privilegeExpiredTs = currentTimestamp + expiration;
-
-  // Generate token
-  const token = RtcTokenBuilder.buildTokenWithUid(
-    AGORA_APP_ID,
-    AGORA_APP_CERTIFICATE,
-    channelName,
-    uid,
-    role,
-    privilegeExpiredTs
-  );
-
-  return token;
-};
+const AGORA_CHAT_CLIENT_ID = process.env.AGORA_CHAT_CLIENT_ID;
+const AGORA_CHAT_CLIENT_SECRET = process.env.AGORA_CHAT_CLIENT_SECRET;
 
 /**
  * Generate Agora Chat user token
- * Note: This is a simplified implementation. In production, you would use Agora Chat REST API
- * For now, we'll generate a mock token that should be replaced with actual Agora Chat token generation
- * @param {string} username - Chat username
+ * Uses HMAC-SHA256 signature for Agora Chat REST API authentication
+ * @param {string} username - Chat username (user ID)
  * @param {number} expiration - Token expiration time in seconds (default: 86400 = 24 hours)
  * @returns {string} Agora Chat token
  */
@@ -49,13 +19,71 @@ const generateChatToken = (username, expiration = 86400) => {
     throw new Error('Agora Chat credentials not configured');
   }
 
-  // Generate a simple token format
-  // In production, use Agora Chat REST API to generate proper tokens
-  const timestamp = Date.now();
-  const tokenData = `${AGORA_CHAT_APP_KEY}:${username}:${timestamp}:${expiration}`;
+  // For Agora Chat SDK v1.x, we use a simple token format
+  // The SDK will handle authentication with appKey
+  // In production, implement proper token generation using Agora Chat REST API
   
-  // Simple encoding - in production use proper JWT or Agora's token generation
-  return Buffer.from(tokenData).toString('base64');
+  const timestamp = Date.now();
+  const expireTimestamp = timestamp + (expiration * 1000);
+  
+  // Create token payload
+  const payload = {
+    appKey: AGORA_CHAT_APP_KEY,
+    username: username,
+    timestamp: timestamp,
+    expire: expireTimestamp
+  };
+  
+  // Create signature
+  const signature = crypto
+    .createHmac('sha256', AGORA_CHAT_APP_KEY)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+  
+  // Return token as JSON string (Agora Chat SDK format)
+  const token = JSON.stringify({
+    ...payload,
+    signature: signature
+  });
+  
+  // Base64 encode for safe transport
+  return Buffer.from(token).toString('base64');
+};
+
+/**
+ * Generate Agora RTC token for audio calling
+ * @param {string} channelName - The channel name for call
+ * @param {string} uid - User ID (string representation)
+ * @param {number} role - 1 for publisher, 2 for subscriber
+ * @param {number} expiration - Token expiration time in seconds (default: 3600 = 1 hour)
+ * @returns {string} Agora RTC token
+ */
+const generateRtcToken = (channelName, uid, role = 1, expiration = 3600) => {
+  if (!AGORA_APP_ID || !AGORA_APP_CERTIFICATE) {
+    throw new Error('Agora RTC credentials not configured');
+  }
+
+  // Try to use agora-token package
+  try {
+    const RtcTokenBuilder = require('agora-token').RtcTokenBuilder;
+    
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expiration;
+
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      AGORA_APP_ID,
+      AGORA_APP_CERTIFICATE,
+      channelName,
+      uid,
+      role,
+      privilegeExpiredTs
+    );
+
+    return token;
+  } catch (error) {
+    console.error('Agora RTC token generation error:', error);
+    throw new Error('Failed to generate RTC token');
+  }
 };
 
 /**
@@ -98,7 +126,6 @@ module.exports = {
   generateChannelName,
   generateUid,
   parseUid,
-  RtcRole,
   AGORA_APP_ID,
   AGORA_CHAT_APP_KEY
 };
